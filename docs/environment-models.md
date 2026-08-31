@@ -1,32 +1,100 @@
-# Main and subagent models via environment variables
+# Main and subagent models via startup selection
 
-This fork adds `PI_SUBAGENT_MODEL` as a hard override for subagent launches.
+This fork adds two related behaviors:
 
-## Two-model setup
+1. `PI_SUBAGENT_MODEL` is a hard override for subagent launches.
+2. A single provider + single default model in `~/.pi/agent/models.json` can act as a template for models named only at startup.
 
-Use one shell variable for the Pi main session and one for every subagent:
+## Minimal models.json
 
-```bash
-export PI_MAIN_MODEL="custom/glm-5.2"
-export PI_SUBAGENT_MODEL="custom/glm-4.7"
+Keep only one provider and one default/template model:
 
-pi --model "$PI_MAIN_MODEL"
+```json
+{
+  "providers": {
+    "custom": {
+      "baseUrl": "https://api.example.com/v1",
+      "apiKey": "$CUSTOM_API_KEY",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "default",
+          "name": "Default",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 200000,
+          "maxTokens": 32768,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}
 ```
 
-`PI_MAIN_MODEL` is a shell-side convenience variable. Pi itself receives the main model through its normal `--model` option.
+The first and only model is used as the template for dynamically named models. Its API type, endpoint, reasoning/input capabilities, context window, token limit, cost, compatibility options, and related model properties are copied to startup-selected models.
 
-`PI_SUBAGENT_MODEL` is read by this fork of `pi-subagents`. When non-empty, it has higher priority than an agent's configured `model` and a per-step model override. It is also enforced again at the final child-launch boundary so callers that pass pre-resolved behavior cannot bypass it.
+## Start with a bare main model name
 
-If `PI_SUBAGENT_MODEL` is unset or contains only whitespace, the upstream model-selection behavior is preserved.
-
-## Same model for main and subagents
+No provider prefix is required:
 
 ```bash
-export PI_MAIN_MODEL="custom/glm-5.2"
-export PI_SUBAGENT_MODEL="custom/glm-5.2"
-
-pi --model "$PI_MAIN_MODEL"
+pi --model glm-5.2
 ```
+
+At extension startup this fork reads `--model glm-5.2`, finds the single provider in `models.json`, and temporarily registers `glm-5.2` under that provider before Pi resolves the startup model.
+
+The API request therefore uses:
+
+```json
+{
+  "model": "glm-5.2"
+}
+```
+
+You do not need to add `glm-5.2` permanently to `models.json`.
+
+## Main + subagent models
+
+```bash
+export PI_SUBAGENT_MODEL="glm-4.7"
+pi --model glm-5.2
+```
+
+Result:
+
+```text
+Main Agent      -> glm-5.2
+All Subagents   -> glm-4.7
+```
+
+`PI_SUBAGENT_MODEL` has higher priority than an agent's configured `model` and a per-step model override. It is also enforced again at the final child-launch boundary.
+
+Both the main and subagent model IDs are dynamically registered from the same default model template. Child Pi processes also run the dynamic registration path, so canonical child launch values such as `custom/glm-4.7` continue to work without requiring that model to exist permanently in `models.json`.
+
+If `PI_SUBAGENT_MODEL` is unset or contains only whitespace, upstream subagent model-selection behavior is preserved.
+
+## Multiple providers
+
+The zero-prefix behavior is intentionally automatic only when `models.json` contains exactly one provider.
+
+If you later configure multiple providers, select the dynamic provider explicitly with:
+
+```bash
+export PI_DYNAMIC_MODEL_PROVIDER="custom"
+pi --model glm-5.2
+```
+
+Pi's normal `--provider custom` option also takes precedence when present.
+
+## Template constraint
+
+The selected provider must contain exactly one configured model. This keeps the behavior deterministic: that model is the template for arbitrary startup model IDs.
 
 ## Install this fork
 
