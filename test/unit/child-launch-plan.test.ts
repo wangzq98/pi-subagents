@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { AgentConfig } from "../../src/agents/agents.ts";
-import { planChildLaunch, resolveStepBehavior } from "../../src/runs/shared/child-launch-plan.ts";
+import { PI_SUBAGENT_MODEL_ENV, planChildLaunch, resolveStepBehavior } from "../../src/runs/shared/child-launch-plan.ts";
 
 const agent = {
 	name: "worker",
@@ -14,6 +14,18 @@ const agent = {
 	model: "openai-codex/gpt-5.6-luna",
 	fast: true,
 } as AgentConfig;
+
+function withSubagentModelEnv(value: string | undefined, fn: () => void): void {
+	const previous = process.env[PI_SUBAGENT_MODEL_ENV];
+	try {
+		if (value === undefined) delete process.env[PI_SUBAGENT_MODEL_ENV];
+		else process.env[PI_SUBAGENT_MODEL_ENV] = value;
+		fn();
+	} finally {
+		if (previous === undefined) delete process.env[PI_SUBAGENT_MODEL_ENV];
+		else process.env[PI_SUBAGENT_MODEL_ENV] = previous;
+	}
+}
 
 describe("child launch planning", () => {
 	it("resolves cwd, behavior, skills, model, and output path without side effects", () => {
@@ -42,6 +54,36 @@ describe("child launch planning", () => {
 			skills: ["review", "shared"],
 			model: "openai-codex/gpt-5.6-luna",
 			fast: true,
+		});
+	});
+
+	it("forces PI_SUBAGENT_MODEL over step and agent model settings", () => {
+		withSubagentModelEnv("custom/glm-4.7", () => {
+			const behavior = resolveStepBehavior(agent, { model: "other/step-model" });
+			assert.equal(behavior.model, "custom/glm-4.7");
+		});
+	});
+
+	it("enforces PI_SUBAGENT_MODEL at the final launch boundary for pre-resolved behavior", () => {
+		withSubagentModelEnv(undefined, () => {
+			const resolvedBehavior = resolveStepBehavior(agent, { model: "other/pre-resolved-model" });
+			withSubagentModelEnv("custom/glm-4.7", () => {
+				const plan = planChildLaunch({
+					agentConfig: agent,
+					stepOverrides: {},
+					resolvedBehavior,
+					runnerCwd: "/tmp/repo",
+					runtimeCwd: "/tmp/repo",
+				});
+				assert.equal(plan.behavior.model, "custom/glm-4.7");
+			});
+		});
+	});
+
+	it("ignores an empty PI_SUBAGENT_MODEL value", () => {
+		withSubagentModelEnv("   ", () => {
+			const behavior = resolveStepBehavior(agent, { model: "other/step-model" });
+			assert.equal(behavior.model, "other/step-model");
 		});
 	});
 
