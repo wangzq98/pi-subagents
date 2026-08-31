@@ -4,6 +4,8 @@ import { resolveChildCwd } from "../../shared/utils.ts";
 import type { OutputMode } from "../../shared/types.ts";
 import { resolveSingleOutputPath } from "./single-output.ts";
 
+export const PI_SUBAGENT_MODEL_ENV = "PI_SUBAGENT_MODEL";
+
 export interface ResolvedStepBehavior {
 	output: string | false;
 	outputMode: OutputMode;
@@ -52,6 +54,11 @@ export interface ChildLaunchPlan {
 	skillNames: string[];
 }
 
+function forcedSubagentModel(): string | undefined {
+	const value = process.env[PI_SUBAGENT_MODEL_ENV]?.trim();
+	return value || undefined;
+}
+
 export function normalizeOutputOverride(output: unknown): string | false | undefined {
 	if (output === false || output === "false") return false;
 	if (output === true || output === "true") return undefined;
@@ -92,7 +99,7 @@ export function resolveStepBehavior(
 	}
 
 	const outputMode = stepOverrides.outputMode ?? agentConfig.outputMode ?? "inline";
-	const model = stepOverrides.model ?? agentConfig.model;
+	const model = forcedSubagentModel() ?? stepOverrides.model ?? agentConfig.model;
 	const fast = stepOverrides.fast ?? agentConfig.fast;
 	return { output, outputMode, reads, progress, skills, model, fast };
 }
@@ -125,6 +132,13 @@ export function planChildLaunch(input: ChildLaunchPlanInput): ChildLaunchPlan {
 		input.task,
 		input.originalTask,
 	);
+
+	// resolvedBehavior may have been computed by a caller before PI_SUBAGENT_MODEL
+	// was applied. Enforce the environment override again at the final child launch boundary.
+	const forcedModel = forcedSubagentModel();
+	if (forcedModel && behavior.model !== forcedModel) {
+		behavior = { ...behavior, model: forcedModel };
+	}
 
 	const inheritedRelativeParallelOutput = Boolean(
 		input.parallelOutputNamespace
